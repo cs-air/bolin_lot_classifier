@@ -286,8 +286,8 @@ function lot_image($request, $response, $args)
 
     $lid = $data['image_data']['lot_id'];
     $iid = $data['image_data']['image_id'];
-    //$data['locked'] = _lock_image($lid, $iid);
-    //$data['image_data']['locked_time'] = $data['locked'];
+    $data['locked'] = _lock_image($lid, $iid);
+    $data['image_data']['locked_time'] = $data['locked'];
 
     return json_response($response, 200, $data);
 }
