@@ -39,7 +39,7 @@ $app->get("/weather", "weather");
 $app->post("/image", "post_image");
 $app->post("/example", "example_handler");
 $app->post("/lock_image/{lot_id}/{image_id}/{lock}", "lock_image");
-$app->post("/save/{lot_id}/{image_id}", "save_image");
+$app->post("/save/{lot_id}/{image_id}", "save_lot_image");
 
 $app->run();
 
