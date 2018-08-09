@@ -9,6 +9,9 @@ require 'debug.php';
 
 $app = new \Slim\App(['displayErrorDetails' => true]);
 
+//pdo sucks 
+$db = new mysqli("localhost", "p-lot",'horseblanketdonkey', "p-lot");
+
 // Get a reference to the slim container so we can add to it.
 $container = $app->getContainer();
 
@@ -30,10 +33,12 @@ $container['pdo'] = function ($container) {
 $app->get("/", "base");
 $app->get("/example", "example_handler");
 $app->get("/lot_image", "lot_image");
+$app->get("/lot_overlay/{lot_id}/{image_id}", "lot_overlay");
 $app->get("/lot[/{id}[/{json}]]", "lot");
 $app->get("/camera", "camera");
 $app->get("/trigger_camera", "trigger_camera");
 $app->get("/weather", "weather");
+$app->get("/image_number", "image_number");
 
 // POST /////////////////////////////////////////////////////////////////////////////////////
 $app->post("/image", "post_image");
@@ -119,7 +124,7 @@ function _weather()
 function lot($request, $response, $args)
 {
     global $app;
-    $db = new mysqli("localhost", "p-lot",'horseblanketdonkey', "p-lot");
+    global $db;
 
     $allowed_params = [
         'id' => ['type'=>'int'],
@@ -160,7 +165,7 @@ function lot($request, $response, $args)
 function lock_image($request, $response, $args)
 {
     global $app;
-    $db = new mysqli("localhost", "p-lot",'horseblanketdonkey', "p-lot");
+    global $db;
 
     $allowed_params = [
         'lot_id' => ['type' => 'int'],
@@ -218,6 +223,7 @@ function lock_image($request, $response, $args)
 function lot_image($request, $response, $args)
 {
     global $app;
+    global $db;
     $pdo = $app->getContainer()->get('pdo');
     $base_url = 'http://cs.mwsu.edu/~griffin/';
 
@@ -226,6 +232,7 @@ function lot_image($request, $response, $args)
     $order = null;
     $lock = false;
     $daylight = null;
+    $date = null;
 
     $params = _build_params_array($request);
 
@@ -245,6 +252,14 @@ function lot_image($request, $response, $args)
         $daylight = $params['daylight'];
     }
 
+    if (array_key_exists('date', $params)) {
+        $date = $params['date'];
+    }
+
+    if (array_key_exists('prev', $params)) {
+        $prev = $params['prev'];
+    }
+
     //debug (print_r($pdo,true), date('Y-m-d H:i:s').": lot_image ", "./logs/output.log");
     $statement = $pdo->select();
     $statement->from('training_images');
@@ -259,10 +274,18 @@ function lot_image($request, $response, $args)
     if ($daylight != null) {
         $statement->where('daylight', '=', $daylight);
     }
+    if ($date != null) {
+        if($prev == 1){
+            $statement->where('date_created', '<', $date);
+        }
+        else{
+            $statement->where('date_created', '>', $date);
+        }
+    }
     if ($order == null) {
-        $statement->orderBy('image_id', 'ASC');
+        $statement->orderBy('date_created', 'ASC');
     } else {
-        $statement->orderBy('image_id', $order);
+        $statement->orderBy('date_created', $order);
     }
 
     $statement->limit(1);
@@ -272,25 +295,142 @@ function lot_image($request, $response, $args)
 
     //build link for front end
     $path = explode('/', $data['image_data']['path']);
-    for ($i = 0; $i < 4; $i++) {
-        array_shift($path);
-    }
-    $data['image_data']['img_url'] = $base_url . implode('/', $path);
 
-    //build thumblink for front end
-    $path = explode('/', $data['image_data']['thumb_path']);
-    for ($i = 0; $i < 4; $i++) {
-        array_shift($path);
-    }
-    $data['image_data']['thumb_url'] = $base_url . implode('/', $path);
+    //debug(print_r($sql,true), date('Y-m-d H:i:s').": Path ", "./logs/output.log");
 
-    $lid = $data['image_data']['lot_id'];
-    $iid = $data['image_data']['image_id'];
-    $data['locked'] = _lock_image($lid, $iid);
-    $data['image_data']['locked_time'] = $data['locked'];
+    if($data['image_data']['path'] == ""){
+        return json_response($response, 200, "error");
+    }
+    else{
+        for ($i = 0; $i < 4; $i++) {
+            array_shift($path);
+        }
+        $data['image_data']['img_url'] = $base_url . implode('/', $path);
+
+        //build thumblink for front end
+        $path = explode('/', $data['image_data']['thumb_path']);
+        for ($i = 0; $i < 4; $i++) {
+            array_shift($path);
+        }
+        $data['image_data']['thumb_url'] = $base_url . implode('/', $path);
+
+        $lid = $data['image_data']['lot_id'];
+        $iid = $data['image_data']['image_id'];
+        $data['locked'] = _lock_image($lid, $iid);
+        $data['image_data']['locked_time'] = $data['locked'];
+
+        return json_response($response, 200, $data);
+    }
+}
+
+
+
+
+/**
+ * Gets number of images
+ * @getParams:
+ *      classified=[0,1]      default=0
+ *      user=[User Email]
+ * @usage:
+ *  get: http://cs.mwsu.edu/~griffin/p-lot/bolin_parking_lot/image_number?user=a@a.com
+ *  returns:
+ *      number of all images classified by a@a.com
+ *
+ *  get: http://cs.mwsu.edu/~griffin/p-lot/bolin_parking_lot/image_number?classified=1
+ *  returns:
+ *      number of all classified images
+ *
+ *  get: http://cs.mwsu.edu/~griffin/p-lot/bolin_parking_lot/image_number
+ *  returns:
+ *      number of all images
+ */
+
+function image_number($request, $response, $args)
+{
+    global $app;
+    global $db;
+    $pdo = $app->getContainer()->get('pdo');
+    $base_url = 'http://cs.mwsu.edu/~griffin/';
+
+    $params = $request->getParams();
+    $user = null;
+    $classified = null;
+
+
+    $params = _build_params_array($request);
+
+    if (array_key_exists('user', $params)) {
+        $user = $params['user'];
+    }
+    if (array_key_exists('classified', $params)) {
+        $classified = $params['classified'];
+    }
+
+    //debug (print_r($pdo,true), date('Y-m-d H:i:s').": lot_image ", "./logs/output.log");
+    $statement = $pdo->select();
+    $statement->from('training_images');
+
+    $statement->where('lot_id', '=', '1');
+
+    if ($user != null) {
+        $statement->where('edited_by', '=', $user);
+    }
+    if ($classified != null) {
+        $statement->where('classified', '=', $classified);
+    }
+    
+
+    $stmt = $statement->execute();
+    $data = $stmt->fetchall();
+    $count = count($data);
+    return json_response($response, 200, $count);
+
+    //debug(print_r($sql,true), date('Y-m-d H:i:s').": Path ", "./logs/output.log");
+}
+
+/**
+ * Gets an overlay for specified image
+ * @Params:
+ *     $request (object): request type
+ *     $response (object): response type
+ *     $args (object): get args
+ */
+function lot_overlay($request, $response, $args)
+{
+    global $app;
+    global $db;
+
+    $get = $request->getQueryParams();
+    $post = $request->getParsedBody();
+
+    //print_r($params);
+
+    $lot_id = $args['lot_id'];
+    $image_id = $args['image_id'];
+    $lot_data = [];
+
+
+    $sql = "SELECT  lot_data FROM `training_images` WHERE `lot_id` = {$lot_id} AND `image_id` = {$image_id}";
+    $result = $db->query($sql);
+    if($result)
+        $row = $result->fetch_assoc();
+
+    // $update = $pdo->update(array(, , ))
+    //     ->table('training_images')
+    //     ->where('lot_id', '=', $lot_id)
+    //     ->where('image_id', '=', $image_id);
+
+    $data = [];
+    //$data['unlocked'] = _lock_image($lot_id, $image_id);
+    $data['sql'] = $sql;
+    $data['success'] = ($result !== false);
+    $data['data'] = $row;
+
 
     return json_response($response, 200, $data);
 }
+
+
 
 /**
  * Gets next available image for classification
@@ -302,26 +442,42 @@ function lot_image($request, $response, $args)
 function save_lot_image($request, $response, $args)
 {
     global $app;
-    $pdo = $app->getContainer()->get('pdo');
+    global $db;
+    //$pdo = $app->getContainer()->get('pdo');
     //debug (print_r($pdo,true), date('Y-m-d H:i:s').": lot_image ", "./logs/output.log");
 
-    $params = $request->getParams();
+    $get = $request->getQueryParams();
+    $post = $request->getParsedBody();
 
     //print_r($params);
+    
+    $lot_id = $args['lot_id'];
+    $image_id = $args['image_id'];
+    $lot_data = json_encode($post['data']);
+    $userEmail = $post['userEmail'];
+    
+    $dls = time();
 
-    $lot_id = $params['lot_id'];
-    $image_id = $params['image_id'];
-    $lot_data = $params['lot_data'];
+    $sql = "UPDATE `training_images` SET `locked_time` = '', `date_last_saved` = '{$dls}', `classified` = 1, `lot_data` = '{$lot_data}', `edited_by` = '{$userEmail}'
+    WHERE `lot_id` = {$lot_id} AND `image_id` = {$image_id}";
 
-    $update = $pdo->update(array('lot_data' => $lot_data, 'classified' => 1, 'date_last_saved' => time()))
-        ->table('training_images')
-        ->where('lot_id', '=', $lot_id)
-        ->where('image_id', '=', $image_id);
+    //debug (print_r($sql,true), date('Y-m-d H:i:s').": lot_image ", "./logs/output.log");
+
+    $result = $db->query($sql);
+
+    
+    // $update = $pdo->update(array(, , ))
+    //     ->table('training_images')
+    //     ->where('lot_id', '=', $lot_id)
+    //     ->where('image_id', '=', $image_id);
 
     $data = [];
-    $data['unlocked'] = _lock_image($lot_id, $image_id);
-    $data['effected_rows'] = $update->execute();
-    $data['success'] = ($data['effected_rows'] > 0);
+    //$data['unlocked'] = _lock_image($lot_id, $image_id);
+    $data['sql'] = $sql;
+    $data['success'] = ($result !== false);
+    $data['args'] = $args;
+    $data['post'] = $post;
+    $data['get'] = $get;
 
     return json_response($response, 200, $data);
 }
